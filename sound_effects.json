@@ -1,0 +1,12 @@
+[
+  { "keyword": "ちぴちぴ", "file": "chipi.wav" },
+  { "keyword": "あもあす", "file": "among_us.ogg" },
+  { "keyword": "は？", "file": "huh.ogg" },
+  { "keyword": "？", "file": "404museum.wav" },
+  { "keyword": "ごまだれ", "file": "gomadare.wav" },
+  { "keyword": "ばかたれ", "file": "gomadare.wav" },
+  { "keyword": "粉バナナ", "file": "konabanana.mp3" },
+  { "keyword": "パフェいわし", "file": "pafeiwashi.mp3" },
+  { "keyword": "oiiai", "file": "oiiai.mp3" },
+  { "keyword": "くしゃみ", "file": "nekokusyami.mp3" }
+]

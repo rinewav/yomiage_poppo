@@ -1,0 +1,43 @@
+{
+  "name": "yomiagepoppo",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "start:2gou": "tsx src/index2gou.ts",
+    "start:3gou": "tsx src/index3gou.ts",
+    "start:4gou": "tsx src/index4gou.ts",
+    "start:5gou": "tsx src/index5gou.ts",
+    "start:all": "bash start.sh",
+    "start:all:compiled": "bash start-compiled.sh",
+    "start:dashboard": "tsx src/dashboardMonitor.ts",
+    "generate-cache": "tsx src/generateCache.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@discordjs/builders": "^1.14.1",
+    "@discordjs/opus": "^0.10.0",
+    "@discordjs/rest": "^2.6.1",
+    "@google-cloud/text-to-speech": "^5.8.1",
+    "axios": "^1.8.4",
+    "discord.js": "^14.26.3",
+    "dotenv": "^16.4.7",
+    "franc": "^6.2.0",
+    "kuromoji": "^0.1.2",
+    "libsodium-wrappers": "^0.8.2",
+    "prism-media": "^1.3.5",
+    "wanakana": "^5.3.1"
+  },
+  "devDependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "@types/kuromoji": "^0.1.3",
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}
