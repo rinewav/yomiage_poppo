@@ -7,12 +7,15 @@ on:
 jobs:
   deploy:
     runs-on: self-hosted
+    defaults:
+      run:
+        shell: cmd
     env:
       BOT_DIR: F:\git\yomiagepoppo\bot
     steps:
       - name: Stop PM2 processes
         working-directory: ${{ env.BOT_DIR }}
-        run: pm2 stop ecosystem.config.cjs || true
+        run: pm2 stop ecosystem.config.cjs || echo already stopped
 
       - name: Pull latest code
         working-directory: ${{ env.BOT_DIR }}
