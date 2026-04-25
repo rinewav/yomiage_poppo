@@ -1,0 +1,30 @@
+name: Deploy Discord Bot
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    env:
+      BOT_DIR: F:\git\yomiagepoppo\bot
+    steps:
+      - name: Pull latest code
+        working-directory: ${{ env.BOT_DIR }}
+        run: git pull origin main
+
+      - name: Install dependencies
+        working-directory: ${{ env.BOT_DIR }}
+        run: npm ci
+
+      - name: Build
+        working-directory: ${{ env.BOT_DIR }}
+        run: npm run build
+
+      - name: Restart Bot with PM2
+        working-directory: ${{ env.BOT_DIR }}
+        run: pm2 restart ecosystem.config.cjs || pm2 start ecosystem.config.cjs
+
+      - name: Save PM2 process list
+        run: pm2 save
