@@ -1,0 +1,45 @@
+name: Discord Release Notification
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Discord Embed Message
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          REPO_NAME: ${{ github.repository }}
+        run: |
+          DESC="${RELEASE_BODY:-No changelog provided.}"
+          CURRENT_YEAR=$(date +%Y)
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          ICON_URL="https://images-ext-1.discordapp.net/external/Pu_lp5ZJ-HSprpf6LdXw0ryjI1irJSB03PIdw1hKgWo/%3Fsize%3D1024/https/cdn.discordapp.com/icons/1312756594416554076/a_820e3982adf284631267b5b80815c8d3.gif"
+          
+          jq -n \
+            --arg title "よみあげぽっぽ更新 - $RELEASE_TAG" \
+            --arg url "$RELEASE_URL" \
+            --arg desc "$DESC" \
+            --arg footer_text "Copyright © $CURRENT_YEAR ぽん酢鯖, All Rights Reserved." \
+            --arg footer_icon "$ICON_URL" \
+            --arg ts "$TIMESTAMP" \
+            '{
+              embeds: [{
+                title: $title,
+                url: $url,
+                description: $desc,
+                color: 5814783,
+                footer: {
+                  text: $footer_text,
+                  icon_url: $footer_icon
+                },
+                timestamp: $ts
+              }]
+            }' > payload.json
+          
+          curl -X POST -H "Content-Type: application/json" -d @payload.json "$DISCORD_WEBHOOK_URL"
