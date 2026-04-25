@@ -10,6 +10,10 @@ jobs:
     env:
       BOT_DIR: F:\git\yomiagepoppo\bot
     steps:
+      - name: Stop PM2 processes
+        working-directory: ${{ env.BOT_DIR }}
+        run: pm2 stop ecosystem.config.cjs || true
+
       - name: Pull latest code
         working-directory: ${{ env.BOT_DIR }}
         run: git pull origin main
@@ -22,7 +26,7 @@ jobs:
         working-directory: ${{ env.BOT_DIR }}
         run: npm run build
 
-      - name: Restart Bot with PM2
+      - name: Start PM2 processes
         working-directory: ${{ env.BOT_DIR }}
         run: pm2 restart ecosystem.config.cjs || pm2 start ecosystem.config.cjs
 
