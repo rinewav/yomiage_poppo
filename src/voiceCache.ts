@@ -1,11 +1,10 @@
 import fs from 'fs';
+import path from 'path';
 import crypto from 'crypto';
 import { PROJECT_ROOT } from './constants';
 import { VoiceCacheEntry } from './types';
 
 export const CACHE_FILE = process.env.CACHE_FILE || path.join(PROJECT_ROOT, 'voice_cache.json');
-
-import path from 'path';
 
 export function readVoiceCache(): Record<string, VoiceCacheEntry> {
   try {
