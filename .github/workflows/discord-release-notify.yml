@@ -16,13 +16,13 @@ jobs:
           RELEASE_BODY: ${{ github.event.release.body }}
           REPO_NAME: ${{ github.repository }}
         run: |
-          DESC="${RELEASE_BODY:-No changelog provided.}"
+          DESC="${RELEASE_BODY:-軽微な修正を行いました。}"
           CURRENT_YEAR=$(date +%Y)
           TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           ICON_URL="https://images-ext-1.discordapp.net/external/Pu_lp5ZJ-HSprpf6LdXw0ryjI1irJSB03PIdw1hKgWo/%3Fsize%3D1024/https/cdn.discordapp.com/icons/1312756594416554076/a_820e3982adf284631267b5b80815c8d3.gif"
-          
+
           jq -n \
-            --arg title "よみあげぽっぽ更新 - $RELEASE_TAG" \
+            --arg title "🐤 よみあげぽっぽ更新 - $RELEASE_TAG" \
             --arg url "$RELEASE_URL" \
             --arg desc "$DESC" \
             --arg footer_text "Copyright © $CURRENT_YEAR ぽん酢鯖, All Rights Reserved." \
@@ -41,5 +41,5 @@ jobs:
                 timestamp: $ts
               }]
             }' > payload.json
-          
+
           curl -X POST -H "Content-Type: application/json" -d @payload.json "$DISCORD_WEBHOOK_URL"
