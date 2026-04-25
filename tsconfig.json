@@ -14,7 +14,6 @@
     "declarationMap": true,
     "sourceMap": true,
     "moduleResolution": "nodenext",
-    "ignoreDeprecations": "6.0",
     "allowSyntheticDefaultImports": true
   },
   "include": ["src/**/*", "src/types"],
