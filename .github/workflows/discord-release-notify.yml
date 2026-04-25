@@ -22,7 +22,7 @@ jobs:
           ICON_URL="https://images-ext-1.discordapp.net/external/Pu_lp5ZJ-HSprpf6LdXw0ryjI1irJSB03PIdw1hKgWo/%3Fsize%3D1024/https/cdn.discordapp.com/icons/1312756594416554076/a_820e3982adf284631267b5b80815c8d3.gif"
 
           jq -n \
-            --arg title "🐤 よみあげぽっぽ更新 - $RELEASE_TAG" \
+            --arg title "🐤 よみあげぽっぽ が更新されました！ - $RELEASE_TAG" \
             --arg url "$RELEASE_URL" \
             --arg desc "$DESC" \
             --arg footer_text "Copyright © $CURRENT_YEAR ぽん酢鯖, All Rights Reserved." \
