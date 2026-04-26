@@ -239,15 +239,15 @@ export async function createBot(config: BotConfig): Promise<Client> {
     return connection;
   }
 
-  function saveLastVC(guildId: string, channelId: string): void {
-    fs.writeFileSync(VC_FILE, JSON.stringify({ guildId, channelId }), 'utf8');
+  function saveLastVC(guildId: string, voiceChannelId: string, textChannelId: string): void {
+    fs.writeFileSync(VC_FILE, JSON.stringify({ guildId, voiceChannelId, textChannelId }), 'utf8');
   }
 
-  function loadLastVC(): { guildId: string; channelId: string } | null {
+  function loadLastVC(): { guildId: string; voiceChannelId: string; textChannelId: string } | null {
     if (fs.existsSync(VC_FILE)) {
       try {
-        const { guildId, channelId } = JSON.parse(fs.readFileSync(VC_FILE, 'utf8'));
-        return { guildId, channelId };
+        const data = JSON.parse(fs.readFileSync(VC_FILE, 'utf8'));
+        return { guildId: data.guildId, voiceChannelId: data.voiceChannelId || data.channelId, textChannelId: data.textChannelId };
       } catch (_) { return null; }
     }
     return null;
@@ -382,7 +382,7 @@ export async function createBot(config: BotConfig): Promise<Client> {
       settings.channelId = interaction.channel!.id;
       saveGuildSettings(guildId, settings);
       await readAloud(interaction.guild.id, [{ type: 'text' as const, content: 'よみあげぽっぽが参加しました' }], client.user!.id, [], settings.ttsEngine, USERSPEAKER_DIR, tokenizer, synthesisQueues, playQueues, isSynthesizing, isPlaying, TEMP_DIR, VOICEVOX_SERVERS);
-      saveLastVC(guildId, voiceChannel.id);
+      saveLastVC(guildId, voiceChannel.id, interaction.channel!.id);
     }
 
     if (commandName === 'leave') {
@@ -930,7 +930,7 @@ export async function createBot(config: BotConfig): Promise<Client> {
       const settings = loadGuildSettings(guild.id);
       settings.channelId = channel.id;
       saveGuildSettings(guild.id, settings);
-      saveLastVC(guild.id, voiceChannel.id);
+      saveLastVC(guild.id, voiceChannel.id, channel.id);
 
       await readAloud(guild.id, [{ type: 'text' as const, content: 'よみあげぽっぽが参加しました' }], client.user!.id, [], settings.ttsEngine, USERSPEAKER_DIR, tokenizer, synthesisQueues, playQueues, isSynthesizing, isPlaying, TEMP_DIR, VOICEVOX_SERVERS);
 
@@ -1028,11 +1028,11 @@ export async function createBot(config: BotConfig): Promise<Client> {
     updatePresence();
     const lastVC = loadLastVC();
     if (lastVC) {
-      const { guildId: lastGuildId, channelId: lastChannelId } = lastVC;
+      const { guildId: lastGuildId, voiceChannelId: lastVoiceChannelId, textChannelId: lastTextChannelId } = lastVC;
       try {
-        const connection = await connectToVC(lastGuildId, lastChannelId);
+        const connection = await connectToVC(lastGuildId, lastVoiceChannelId);
         if (connection) {
-          console.log(`前回のVC (${lastChannelId}) に再接続しました。`);
+          console.log(`前回のVC (${lastVoiceChannelId}) に再接続しました。`);
 
           synthesisQueues.set(lastGuildId, []);
           playQueues.set(lastGuildId, []);
@@ -1045,10 +1045,14 @@ export async function createBot(config: BotConfig): Promise<Client> {
           });
 
           const settings = loadGuildSettings(lastGuildId);
+          if (lastTextChannelId) {
+            settings.channelId = lastTextChannelId;
+            saveGuildSettings(lastGuildId, settings);
+          }
           await readAloud(lastGuildId, [{ type: 'text' as const, content: 'よみあげぽっぽが正常に再接続しました' }], client.user!.id, [], settings.ttsEngine, USERSPEAKER_DIR, tokenizer, synthesisQueues, playQueues, isSynthesizing, isPlaying, TEMP_DIR, VOICEVOX_SERVERS);
 
           const guild = await client.guilds.fetch(lastGuildId);
-          const textChannelId = settings.channelId;
+          const textChannelId = lastTextChannelId || settings.channelId;
           if (textChannelId) {
             const textChannel = await guild.channels.fetch(textChannelId);
             if (textChannel && textChannel.isTextBased()) {
