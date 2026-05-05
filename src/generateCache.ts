@@ -1,7 +1,9 @@
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
+import { PROJECT_ROOT, CACHE_GENERATION_DELAY_MS, MAX_SPEAKER_ID } from './constants';
+import { getCacheKey, readVoiceCache, updateVoiceCache, initCacheFile } from './voiceCache';
+import { VoiceCacheEntry } from './types';
 
 console.log('事前キャッシュ生成スクリプトを開始します...');
 
@@ -13,17 +15,10 @@ if (!PRIMARY_VOICEVOX_URL) {
   process.exit(1);
 }
 
-const TARGET_SPEAKER_IDS: number[] = Array.from({ length: 50 }, (_, i) => i + 1);
-
-const PROJECT_ROOT = path.resolve(__dirname, '..');
+const TARGET_SPEAKER_IDS: number[] = Array.from({ length: MAX_SPEAKER_ID }, (_, i) => i + 1);
 
 const CACHE_LIST_FILE: string = path.join(PROJECT_ROOT, 'cache_list.txt');
-const CACHE_JSON_FILE: string = path.join(PROJECT_ROOT, 'voice_cache.json');
 const PRE_CACHE_DIR: string = path.join(PROJECT_ROOT, 'pre_cache_audio');
-
-function getCacheKey(text: string, speakerId: number): string {
-  return crypto.createHash('sha256').update(`${speakerId}_${text}`).digest('hex');
-}
 
 async function getVoicevoxAudio(text: string, speakerId: number): Promise<Buffer> {
   let queryData: any;
@@ -68,16 +63,9 @@ async function generateCache(): Promise<void> {
     return;
   }
   fs.mkdirSync(PRE_CACHE_DIR, { recursive: true });
+  initCacheFile();
 
-  let voiceCache: Record<string, string> = {};
-  if (fs.existsSync(CACHE_JSON_FILE)) {
-    try {
-      voiceCache = JSON.parse(fs.readFileSync(CACHE_JSON_FILE, 'utf8'));
-      console.log('既存の voice_cache.json を読み込みました。');
-    } catch (e) {
-      console.error('voice_cache.json の読み込みに失敗しました。新しいファイルを作成します。', e);
-    }
-  }
+  const cache = readVoiceCache();
 
   const textsToCache: string[] = fs
     .readFileSync(CACHE_LIST_FILE, 'utf8')
@@ -91,9 +79,11 @@ async function generateCache(): Promise<void> {
 
   for (const text of textsToCache) {
     for (const speakerId of TARGET_SPEAKER_IDS) {
-      const key = getCacheKey(text, speakerId);
+      const isHankaku = /^[\uFF61-\uFF9F]+$/.test(text);
+      const key = getCacheKey(text, speakerId, isHankaku, 'hybrid');
 
-      if (voiceCache[key] && fs.existsSync(voiceCache[key])) {
+      const existing = cache[key];
+      if (existing && fs.existsSync(existing.filePath)) {
         console.log(`[SKIP] 「${text}」(ID:${speakerId}) は既にキャッシュされています。`);
         continue;
       }
@@ -105,21 +95,21 @@ async function generateCache(): Promise<void> {
         const filePath = path.join(PRE_CACHE_DIR, `${key}.wav`);
         fs.writeFileSync(filePath, audioData);
 
-        voiceCache[key] = filePath;
+        updateVoiceCache((c) => {
+          c[key] = {
+            text,
+            speakerId,
+            filePath,
+            createdAt: new Date().toISOString(),
+          };
+        });
 
         console.log(`[SUCCESS] 「${text}」(ID:${speakerId}) を ${filePath} に保存しました。`);
       } catch (error: any) {
         console.error(`[FAIL] 「${text}」(ID:${speakerId}) の生成に失敗しました:`, error.message);
       }
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, CACHE_GENERATION_DELAY_MS));
     }
-  }
-
-  try {
-    fs.writeFileSync(CACHE_JSON_FILE, JSON.stringify(voiceCache, null, 2), 'utf8');
-    console.log('voice_cache.json の更新が完了しました。');
-  } catch (e) {
-    console.error('voice_cache.json の書き込みに失敗しました。', e);
   }
 
   console.log('事前キャッシュ生成スクリプトが完了しました。');

@@ -1,10 +1,46 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { PROJECT_ROOT } from './constants';
+import { PROJECT_ROOT, CACHE_LOCK_RETRIES, CACHE_LOCK_RETRY_MS, CACHE_LOCK_STALE_MS } from './constants';
 import { VoiceCacheEntry } from './types';
 
 export const CACHE_FILE = process.env.CACHE_FILE || path.join(PROJECT_ROOT, 'voice_cache.json');
+const LOCK_DIR = CACHE_FILE + '.lock';
+const TMP_FILE = CACHE_FILE + '.tmp';
+
+function acquireLock(): void {
+  for (let i = 0; i < CACHE_LOCK_RETRIES; i++) {
+    try {
+      fs.mkdirSync(LOCK_DIR);
+      return;
+    } catch (err: unknown) {
+      const nodeErr = err as NodeJS.ErrnoException;
+      if (nodeErr.code === 'EEXIST') {
+        try {
+          const stat = fs.statSync(LOCK_DIR);
+          if (Date.now() - stat.mtimeMs > CACHE_LOCK_STALE_MS) {
+            try { fs.rmdirSync(LOCK_DIR); } catch (_) { /* race — retry */ }
+            continue;
+          }
+        } catch (_) { /* lock dir removed between stat and rmdir — retry */ }
+        const deadline = Date.now() + CACHE_LOCK_RETRY_MS;
+        while (Date.now() < deadline) { /* busy wait */ }
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error(`Could not acquire cache lock after ${CACHE_LOCK_RETRIES} retries`);
+}
+
+function releaseLock(): void {
+  try { fs.rmdirSync(LOCK_DIR); } catch (_) { /* already released */ }
+}
+
+function writeAtomic(data: Record<string, VoiceCacheEntry>): void {
+  fs.writeFileSync(TMP_FILE, JSON.stringify(data), 'utf8');
+  fs.renameSync(TMP_FILE, CACHE_FILE);
+}
 
 export function readVoiceCache(): Record<string, VoiceCacheEntry> {
   try {
@@ -20,23 +56,14 @@ export function readVoiceCache(): Record<string, VoiceCacheEntry> {
   }
 }
 
-export function updateVoiceCache(updater: (cache: Record<string, VoiceCacheEntry>) => void, retries: number = 10, busyWaitMs: number = 20): void {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const cache = readVoiceCache();
-      updater(cache);
-      fs.writeFileSync(CACHE_FILE, JSON.stringify(cache), 'utf8');
-      return;
-    } catch (err: unknown) {
-      const nodeErr = err as NodeJS.ErrnoException | null;
-      if (nodeErr && (nodeErr.code === 'EBUSY' || nodeErr.code === 'EPERM')) {
-        const start = Date.now();
-        while (Date.now() - start < busyWaitMs) { /* busy wait */ }
-        continue;
-      }
-      console.error(`[Cache] voice_cache.json の書き込みに失敗しました。`, err);
-      break;
-    }
+export function updateVoiceCache(updater: (cache: Record<string, VoiceCacheEntry>) => void): void {
+  acquireLock();
+  try {
+    const cache = readVoiceCache();
+    updater(cache);
+    writeAtomic(cache);
+  } finally {
+    releaseLock();
   }
 }
 
@@ -48,6 +75,13 @@ export function getCacheKey(text: string, speakerId: number, highPitch: boolean 
 
 export function initCacheFile(): void {
   if (!fs.existsSync(CACHE_FILE)) {
-    fs.writeFileSync(CACHE_FILE, JSON.stringify({}), 'utf8');
+    acquireLock();
+    try {
+      if (!fs.existsSync(CACHE_FILE)) {
+        writeAtomic({});
+      }
+    } finally {
+      releaseLock();
+    }
   }
 }

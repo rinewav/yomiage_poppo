@@ -1,6 +1,6 @@
 # AGENTS.md — yomiagepoppo
 
-Discord TTS (text-to-speech) bot fleet. Reads channel messages aloud in voice channels using VOICEVOX (Japanese) and Google Cloud TTS (non-Japanese/fallback).
+Discord TTS bot fleet (5 instances). Reads channel messages aloud in voice channels using VOICEVOX (Japanese) and Google Cloud TTS (non-Japanese/fallback).
 
 ## Commands
 
@@ -19,20 +19,21 @@ No lint, typecheck, or test commands are configured.
 ## Architecture
 
 - **Fleet of 5 bots** (1–5号機). Each has its own entry point (`src/index.ts`, `src/index2gou.ts`, … `index5gou.ts`) and `.env` file (`.env`, `2gou.env`, … `5gou.env`).
-- **All logic lives in `src/botCore.ts`** — entry points only pass a `BotConfig` with bot number, env path, intents, and sound effects map.
+- **All logic lives in `src/botCore.ts`** — entry points only pass a `BotConfig` (bot number, env path, vcFileSuffix, intents).
 - `src/audioPlayer.ts` — synthesis + playback queues per guild
 - `src/tts.ts` — VOICEVOX and Google Cloud TTS integration
 - `src/voiceCache.ts` — shared voice cache (`voice_cache.json`) with retry-on-busy writes (multiple bots write the same file)
 - `src/utils.ts` — text normalization, morphological chunking (kuromoji), language segmentation
-- `src/constants.ts` — all tunables; sound effect maps `SOUND_EFFECTS_MAP_FULL` (1号機) and `SOUND_EFFECTS_MAP_SUBSET` (3号機)
-- `src/botCoordinator.ts` — HTTP-based inter-bot coordination for auto-join (each bot runs `GET /status` and `GET /logs` endpoints)
-- `src/dashboard.ts` — TUI dashboard for individual bot runs (ASCII art banner, fleet health grid, latest 3 logs)
-- `src/dashboardMonitor.ts` — Central dashboard monitor for `start.sh` (queries all bots' HTTP endpoints, renders unified view)
+- `src/constants.ts` — all tunables
+- `src/soundEffects.ts` — loads/manages sound effects from `sound_effects.json` (keyword → `sounds/<file>`). Users can add/remove at runtime via bot commands.
+- `src/botCoordinator.ts` — HTTP-based inter-bot coordination for auto-join (each bot exposes `GET /status` and `GET /logs`)
+- `src/dashboard.ts` — TUI dashboard for individual bot runs; `src/dashboardMonitor.ts` — central fleet monitor
+- `src/types/` — ambient type declarations for `franc`, `kuromoji`, `prism-media` (no `@types` packages)
 
 ## Required environment
 
-Each `.env` needs: `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`.  
-Shared across bots: `VOICEVOX_URLS` (comma-separated), `GOOGLE_APPLICATION_CREDENTIALS` (path to `google-credentials.json`), `HEALTH_CHECK_CHANNEL_ID`, `BOT_PORT` (unique per bot, e.g. 31001–31005), `BOT_PORTS` (comma-separated list of all bot ports).
+Each `.env` needs: `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`.
+Shared across bots: `VOICEVOX_URLS` (comma-separated), `GOOGLE_APPLICATION_CREDENTIALS` (path to `google-credentials.json`), `HEALTH_CHECK_CHANNEL_ID`, `BOT_PORT` (unique per bot, 31001–31005), `BOT_PORTS` (comma-separated all ports).
 
 External services at runtime: one or more VOICEVOX servers, Google Cloud TTS API.
 
@@ -40,11 +41,11 @@ External services at runtime: one or more VOICEVOX servers, Google Cloud TTS API
 
 - TypeScript strict mode, `nodenext` module resolution, target ES2022.
 - `constants.ts` uses `__dirname` for `PROJECT_ROOT` — works in both tsx and compiled output.
-- Guild settings stored as JSON in `guild_settings/<guildId>.json`. Per-user speaker preferences in `user_speakers/<userId>.json`.
-- Sound effects: add `.wav`/`.ogg`/`.mp3` to `sounds/`, then add the keyword→path entry in `SOUND_EFFECTS_MAP_FULL` and/or `SOUND_EFFECTS_MAP_SUBSET` in `src/constants.ts`.
-- `voice_cache.json` is shared across all bot instances; writes use retry with EBUSY/EPERM handling.
+- Guild settings in `guild_settings/<guildId>.json`. Per-user speaker prefs in `user_speakers/<userId>.json`. Per-bot VC state in `lastVoiceChannel_<N>.json`.
+- `voice_cache.json` is shared across all bot instances; `voiceCache.ts` uses `mkdir`-based file locking (cross-process safe) + atomic writes (`tmp` + `renameSync`) to prevent lost updates and corruption.
 - Uncaught exceptions and unhandled rejections call `process.exit(1)`. The `start.sh` / `start-compiled.sh` wrappers auto-restart after 5 seconds.
 - `start.sh` / `start-compiled.sh` redirect each bot's output to `logs/Ngou.log` and run the central dashboard monitor in the foreground. Ctrl+C stops everything cleanly via trap.
-- 2–5号機 call `dotenv.config({ path: './Ngou.env' })` before importing anything else (so env is set before `botCore` reads `process.env`).
+- 2–5号機 call `dotenv.config({ path: './Ngou.env' })` before importing anything else (so env is set before `botCore` reads `process.env`). `botCore.ts` also calls `dotenv.config` with `config.envPath` as a safety net.
 - 1号機 has `GuildMembers` and `GuildPresences` intents omitted; 2–5号機 include them.
 - Bot numbers determine auto-join priority (lowest number wins) for listening channels matching `^👂｜聞き専-(\d+)$`. Coordination is via HTTP (`botCoordinator.ts`): each bot exposes `GET /status` and the lowest-numbered free bot wins. A `joining` lock flag prevents races during VC connection.
+- **Production deployment**: GitHub Actions (`deploy.yml`) triggers on release publish → self-hosted Windows runner → PM2 via `ecosystem.config.cjs` (5 apps from `dist/`). All `.env` files and `google-credentials.json` must exist on the production server already.
