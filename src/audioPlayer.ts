@@ -106,6 +106,8 @@ export async function processSynthesisQueue(
   }
 
   while (synthesisQueue.length > 0) {
+    if (synthesisQueues.get(guildId) !== synthesisQueue) return;
+
     const item = synthesisQueue.shift()!;
 
     if (item.type === 'text') {
@@ -120,6 +122,12 @@ export async function processSynthesisQueue(
         tempPath = path.join(tempDir, `synth_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
         try {
           await synthesizeMixedTTS(item.text!, item.speakerId!, tempPath, item.highPitch, item.ttsEngine, servers);
+          if (synthesisQueues.get(guildId) !== synthesisQueue) {
+            if (fs.existsSync(tempPath)) {
+              try { fs.unlinkSync(tempPath); } catch (_) { /* ignore */ }
+            }
+            return;
+          }
           if (fs.existsSync(tempPath)) {
             updateVoiceCache((cache) => {
               cache[key] = {
@@ -165,6 +173,8 @@ export async function processSynthesisQueue(
     }
   }
 
+  if (synthesisQueues.get(guildId) !== synthesisQueue) return;
+
   isSynthesizing.set(guildId, false);
 
   if (playQueue.length > 0 && !isPlaying.get(guildId)) {
@@ -194,12 +204,6 @@ export async function processPlayQueue(
   }
 
   let player = (connection.state as any).subscription?.player;
-  if (player) {
-    player.stop(true);
-    player.removeAllListeners();
-    (connection.state as any).subscription?.unsubscribe();
-    player = null;
-  }
   if (!player) {
     player = createAudioPlayer();
     connection.subscribe(player);
