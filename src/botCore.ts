@@ -348,6 +348,8 @@ export async function createBot(config: BotConfig): Promise<Client> {
         selfDeaf: true,
       });
 
+      await entersState(connection, VoiceConnectionStatus.Ready, VC_CONNECTION_TIMEOUT_MS);
+
       connection.on(VoiceConnectionStatus.Disconnected, async () => {
         try {
           await Promise.race([
