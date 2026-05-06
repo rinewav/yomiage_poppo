@@ -22,6 +22,7 @@ export async function readAloud(
   tempDir: string,
   servers: any[]
 ): Promise<void> {
+  if (!getVoiceConnection(guildId)) return;
   if (!synthesisQueues.has(guildId)) synthesisQueues.set(guildId, []);
   if (!playQueues.has(guildId)) playQueues.set(guildId, []);
 
@@ -193,6 +194,12 @@ export async function processPlayQueue(
   }
 
   let player = (connection.state as any).subscription?.player;
+  if (player) {
+    player.stop(true);
+    player.removeAllListeners();
+    (connection.state as any).subscription?.unsubscribe();
+    player = null;
+  }
   if (!player) {
     player = createAudioPlayer();
     connection.subscribe(player);

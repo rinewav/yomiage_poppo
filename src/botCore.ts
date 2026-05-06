@@ -300,7 +300,9 @@ export async function createBot(config: BotConfig): Promise<Client> {
       const subscription = (connection.state as any).subscription;
       if (subscription?.player) {
         subscription.player.stop(true);
+        subscription.player.removeAllListeners();
       }
+      subscription?.unsubscribe();
     }
   }
 
@@ -369,6 +371,7 @@ export async function createBot(config: BotConfig): Promise<Client> {
       });
 
       isPlaying.set(guildId, false);
+      isSynthesizing.set(guildId, false);
       synthesisQueues.set(guildId, []);
       playQueues.set(guildId, []);
       updatePresence();
@@ -916,6 +919,23 @@ export async function createBot(config: BotConfig): Promise<Client> {
       synthesisQueues.set(guild.id, []);
       playQueues.set(guild.id, []);
       isPlaying.set(guild.id, false);
+      isSynthesizing.set(guild.id, false);
+
+      connection.on(VoiceConnectionStatus.Disconnected, async () => {
+        try {
+          await Promise.race([
+            entersState(connection, VoiceConnectionStatus.Signalling, VC_RECONNECT_TIMEOUT_MS),
+            entersState(connection, VoiceConnectionStatus.Connecting, VC_RECONNECT_TIMEOUT_MS),
+          ]);
+          console.log(`[VC Status] Guild ${guild.id}: Connection is attempting to reconnect.`);
+        } catch {
+          console.warn(`[VC Status] Guild ${guild.id}: Connection permanently disconnected. Destroying and cleaning up.`);
+          if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
+            connection.destroy();
+          }
+          cleanupGuildState(guild.id);
+        }
+      });
 
       connection.on(VoiceConnectionStatus.Destroyed, () => {
         console.log(`[VC Status] Guild ${guild.id}: Connection destroyed. Cleaning up.`);
@@ -1037,6 +1057,23 @@ export async function createBot(config: BotConfig): Promise<Client> {
           synthesisQueues.set(lastGuildId, []);
           playQueues.set(lastGuildId, []);
           isPlaying.set(lastGuildId, false);
+          isSynthesizing.set(lastGuildId, false);
+
+          connection.on(VoiceConnectionStatus.Disconnected, async () => {
+            try {
+              await Promise.race([
+                entersState(connection, VoiceConnectionStatus.Signalling, VC_RECONNECT_TIMEOUT_MS),
+                entersState(connection, VoiceConnectionStatus.Connecting, VC_RECONNECT_TIMEOUT_MS),
+              ]);
+              console.log(`[VC Status] Guild ${lastGuildId}: Connection is attempting to reconnect.`);
+            } catch {
+              console.warn(`[VC Status] Guild ${lastGuildId}: Connection permanently disconnected. Destroying and cleaning up.`);
+              if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
+                connection.destroy();
+              }
+              cleanupGuildState(lastGuildId);
+            }
+          });
 
           connection.on(VoiceConnectionStatus.Destroyed, () => {
             console.log(`[VC Status] Guild ${lastGuildId}: Connection destroyed. Cleaning up.`);
