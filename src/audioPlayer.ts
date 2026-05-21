@@ -1,8 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { spawn } from 'child_process';
-import type { ChildProcess } from 'child_process';
-import { createAudioPlayer, createAudioResource, AudioPlayerStatus, AudioPlayer, AudioResource, getVoiceConnection, NoSubscriberBehavior, StreamType, VoiceConnectionStatus } from '@discordjs/voice';
+import { createAudioPlayer, createAudioResource, AudioPlayerStatus, AudioPlayer, getVoiceConnection, NoSubscriberBehavior, VoiceConnectionStatus } from '@discordjs/voice';
 import { SynthesisItem, Segment } from './types';
 import { DEFAULT_PLAYBACK_VOLUME, SOUND_EFFECT_VOLUME, SOUNDS_DIR } from './constants';
 import { synthesizeMixedTTS } from './tts';
@@ -271,47 +269,6 @@ export async function processPlayQueue(
   }
 }
 
-function spawnFfmpegOpus(audioPath: string, volume: number) {
-  const args = [
-    '-hide_banner',
-    '-analyzeduration', '0',
-    '-loglevel', 'warning',
-    '-i', audioPath,
-    '-filter:a', `volume=${volume}`,
-    '-acodec', 'libopus',
-    '-f', 'opus',
-    '-ar', '48000',
-    '-ac', '2',
-    '-b:a', '96k',
-    'pipe:1',
-  ];
-  return spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-}
-
-function attachFfmpegLifecycle(ffmpeg: ChildProcess, resource: AudioResource, audioPath: string): void {
-  let stderrBuf = '';
-  ffmpeg.stderr?.on('data', (chunk: Buffer) => {
-    stderrBuf += chunk.toString();
-    if (stderrBuf.length > 4096) stderrBuf = stderrBuf.slice(-4096);
-  });
-  ffmpeg.on('error', (err) => {
-    console.error(`[ffmpeg spawn error] path=${audioPath}:`, err.message);
-  });
-  ffmpeg.on('exit', (code, signal) => {
-    if (code !== 0 && signal !== 'SIGTERM' && signal !== 'SIGKILL') {
-      console.warn(`[ffmpeg exit] path=${audioPath} code=${code} signal=${signal} stderr=${stderrBuf.trim()}`);
-    }
-  });
-  const killFfmpeg = () => {
-    if (!ffmpeg.killed && ffmpeg.exitCode === null) {
-      try { ffmpeg.kill('SIGKILL'); } catch (_) { /* ignore */ }
-    }
-  };
-  resource.playStream.once('end', killFfmpeg);
-  resource.playStream.once('close', killFfmpeg);
-  resource.playStream.once('error', killFfmpeg);
-}
-
 function playNextAudio(currentPlayer: AudioPlayer, playQueue: string[], guildId: string, playQueues: Map<string, string[]>, isPlaying: Map<string, boolean>): void {
   if (guildPlayers.get(guildId) !== currentPlayer) {
     return;
@@ -348,22 +305,14 @@ function playNextAudio(currentPlayer: AudioPlayer, playQueue: string[], guildId:
     volumeToApply = DEFAULT_PLAYBACK_VOLUME;
   }
 
-  let ffmpeg: ReturnType<typeof spawnFfmpegOpus> | null = null;
   try {
-    ffmpeg = spawnFfmpegOpus(audioPath, volumeToApply);
-    if (!ffmpeg.stdout) {
-      throw new Error('ffmpeg stdout is not available');
-    }
-    const resource = createAudioResource(ffmpeg.stdout, {
-      inputType: StreamType.OggOpus,
+    const resource = createAudioResource(audioPath, {
+      inlineVolume: true,
     });
-    attachFfmpegLifecycle(ffmpeg, resource, audioPath);
+    resource.volume!.setVolume(volumeToApply);
     currentPlayer.play(resource);
   } catch (error) {
     console.error(`[ERROR] 音声リソースの作成または再生に失敗しました (path: ${audioPath}):`, error);
-    if (ffmpeg && !ffmpeg.killed) {
-      try { ffmpeg.kill('SIGKILL'); } catch (_) { /* ignore */ }
-    }
     playNextAudio(currentPlayer, playQueue, guildId, playQueues, isPlaying);
   }
 }
