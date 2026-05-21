@@ -277,16 +277,12 @@ function spawnFfmpegOpus(audioPath: string, volume: number) {
     '-analyzeduration', '0',
     '-loglevel', 'warning',
     '-i', audioPath,
-    '-vn',
-    '-filter:a', `volume=${volume},aresample=async=1:first_pts=0`,
+    '-filter:a', `volume=${volume}`,
     '-acodec', 'libopus',
     '-f', 'opus',
     '-ar', '48000',
     '-ac', '2',
     '-b:a', '96k',
-    '-frame_duration', '20',
-    '-application', 'voip',
-    '-vbr', 'off',
     'pipe:1',
   ];
   return spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
