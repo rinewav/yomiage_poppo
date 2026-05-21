@@ -1,11 +1,34 @@
 import fs from 'fs';
 import path from 'path';
-import { createAudioPlayer, createAudioResource, AudioPlayerStatus, getVoiceConnection, VoiceConnection, StreamType, NoSubscriberBehavior } from '@discordjs/voice';
+import { createAudioPlayer, createAudioResource, AudioPlayerStatus, AudioPlayer, getVoiceConnection, NoSubscriberBehavior, VoiceConnectionStatus } from '@discordjs/voice';
 import { SynthesisItem, Segment } from './types';
 import { DEFAULT_PLAYBACK_VOLUME, SOUND_EFFECT_VOLUME, SOUNDS_DIR } from './constants';
 import { synthesizeMixedTTS } from './tts';
 import { getCacheKey, readVoiceCache, updateVoiceCache } from './voiceCache';
 import { segmentByLanguage, chunkTextByMorphs } from './utils';
+
+const guildPlayers: Map<string, AudioPlayer> = new Map();
+
+export function getGuildPlayer(guildId: string): AudioPlayer | undefined {
+  return guildPlayers.get(guildId);
+}
+
+export function destroyGuildPlayer(guildId: string): void {
+  const player = guildPlayers.get(guildId);
+  if (!player) return;
+  guildPlayers.delete(guildId);
+  player.removeAllListeners(AudioPlayerStatus.Idle);
+  player.removeAllListeners(AudioPlayerStatus.Buffering);
+  player.removeAllListeners(AudioPlayerStatus.Playing);
+  player.removeAllListeners(AudioPlayerStatus.Paused);
+  player.removeAllListeners(AudioPlayerStatus.AutoPaused);
+  player.removeAllListeners('error');
+  try {
+    player.stop(true);
+  } catch (err) {
+    console.warn(`[destroyGuildPlayer] stop() に失敗: ${(err as Error).message}`);
+  }
+}
 
 export async function readAloud(
   guildId: string,
@@ -52,10 +75,10 @@ export async function readAloud(
           const textChunks = await chunkTextByMorphs(langSegment.text, tokenizer, noSplitWords);
           for (const chunk of textChunks) {
             if (chunk.trim()) {
-              const subSegments = chunk.trim().split(/([\uFF61-\uFF9F]+)/);
+              const subSegments = chunk.trim().split(/([｡-ﾟ]+)/);
               for (const subSegment of subSegments) {
                 if (!subSegment) continue;
-                const isHankaku = /^[\uFF61-\uFF9F]+$/.test(subSegment);
+                const isHankaku = /^[｡-ﾟ]+$/.test(subSegment);
                 itemsToPush.push({ type: 'text', text: subSegment, speakerId, userId, highPitch: isHankaku, ttsEngine });
               }
             }
@@ -107,6 +130,7 @@ export async function processSynthesisQueue(
 
   while (synthesisQueue.length > 0) {
     if (synthesisQueues.get(guildId) !== synthesisQueue) return;
+    if (playQueues.get(guildId) !== playQueue) return;
 
     const item = synthesisQueue.shift()!;
 
@@ -122,7 +146,7 @@ export async function processSynthesisQueue(
         tempPath = path.join(tempDir, `synth_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
         try {
           await synthesizeMixedTTS(item.text!, item.speakerId!, tempPath, item.highPitch, item.ttsEngine, servers);
-          if (synthesisQueues.get(guildId) !== synthesisQueue) {
+          if (synthesisQueues.get(guildId) !== synthesisQueue || playQueues.get(guildId) !== playQueue) {
             if (fs.existsSync(tempPath)) {
               try { fs.unlinkSync(tempPath); } catch (_) { /* ignore */ }
             }
@@ -198,48 +222,69 @@ export async function processPlayQueue(
   const connection = getVoiceConnection(guildId);
   const playQueue = playQueues.get(guildId);
 
-  if (!connection || !playQueue || playQueue.length === 0) {
+  if (!connection || connection.state.status === VoiceConnectionStatus.Destroyed || !playQueue || playQueue.length === 0) {
     isPlaying.set(guildId, false);
     return;
   }
 
-  let player = (connection.state as any).subscription?.player;
+  let player = guildPlayers.get(guildId);
   if (!player) {
     player = createAudioPlayer({
       behaviors: { noSubscriber: NoSubscriberBehavior.Pause },
     });
+    guildPlayers.set(guildId, player);
     connection.subscribe(player);
 
+    const guildPlayerRef = player;
+
     player.on(AudioPlayerStatus.Idle, () => {
-      if (playQueue.length === 0) {
+      if (guildPlayers.get(guildId) !== guildPlayerRef) return;
+      const currentQueue = playQueues.get(guildId);
+      if (!currentQueue || currentQueue.length === 0) {
         isPlaying.set(guildId, false);
       } else {
-        playNextAudio(player, playQueue, guildId, isPlaying);
+        playNextAudio(guildPlayerRef, currentQueue, guildId, playQueues, isPlaying);
       }
     });
 
     player.on('error', (error: Error) => {
       console.error(`AudioPlayer Error (guildId: ${guildId}):`, error.message);
+      if (guildPlayers.get(guildId) !== guildPlayerRef) return;
       isPlaying.set(guildId, false);
-      if (playQueue.length > 0) {
-        playNextAudio(player, playQueue, guildId, isPlaying);
+      const currentQueue = playQueues.get(guildId);
+      if (currentQueue && currentQueue.length > 0) {
+        playNextAudio(guildPlayerRef, currentQueue, guildId, playQueues, isPlaying);
       }
     });
   }
 
   if (player.state.status === AudioPlayerStatus.Idle && playQueue.length > 0) {
     isPlaying.set(guildId, true);
-    playNextAudio(player, playQueue, guildId, isPlaying);
+    playNextAudio(player, playQueue, guildId, playQueues, isPlaying);
   } else if (player.state.status !== AudioPlayerStatus.Playing && player.state.status !== AudioPlayerStatus.Buffering && playQueue.length > 0) {
     isPlaying.set(guildId, true);
-    playNextAudio(player, playQueue, guildId, isPlaying);
+    playNextAudio(player, playQueue, guildId, playQueues, isPlaying);
   } else if (playQueue.length === 0) {
     isPlaying.set(guildId, false);
   }
 }
 
-function playNextAudio(currentPlayer: any, playQueue: string[], guildId: string, isPlaying: Map<string, boolean>): void {
+function playNextAudio(currentPlayer: AudioPlayer, playQueue: string[], guildId: string, playQueues: Map<string, string[]>, isPlaying: Map<string, boolean>): void {
+  if (guildPlayers.get(guildId) !== currentPlayer) {
+    return;
+  }
+
+  if (playQueues.get(guildId) !== playQueue) {
+    return;
+  }
+
   if (playQueue.length === 0) {
+    isPlaying.set(guildId, false);
+    return;
+  }
+
+  const connection = getVoiceConnection(guildId);
+  if (!connection || connection.state.status !== VoiceConnectionStatus.Ready) {
     isPlaying.set(guildId, false);
     return;
   }
@@ -248,7 +293,7 @@ function playNextAudio(currentPlayer: any, playQueue: string[], guildId: string,
 
   if (!fs.existsSync(audioPath)) {
     console.warn(`[WARN] 再生する音声ファイルが見つかりません、スキップします: ${audioPath}`);
-    playNextAudio(currentPlayer, playQueue, guildId, isPlaying);
+    playNextAudio(currentPlayer, playQueue, guildId, playQueues, isPlaying);
     return;
   }
 
@@ -263,12 +308,11 @@ function playNextAudio(currentPlayer: any, playQueue: string[], guildId: string,
   try {
     const resource = createAudioResource(audioPath, {
       inlineVolume: true,
-      inputType: StreamType.Arbitrary,
     });
-    resource.volume.setVolume(volumeToApply);
+    resource.volume!.setVolume(volumeToApply);
     currentPlayer.play(resource);
   } catch (error) {
     console.error(`[ERROR] 音声リソースの作成または再生に失敗しました (path: ${audioPath}):`, error);
-    playNextAudio(currentPlayer, playQueue, guildId, isPlaying);
+    playNextAudio(currentPlayer, playQueue, guildId, playQueues, isPlaying);
   }
 }

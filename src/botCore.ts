@@ -10,7 +10,7 @@ import { PROJECT_ROOT, HEALTH_CHECK_TIMEOUT_MS, SERVER_COOLDOWN_MS, VC_CONNECTIO
 import { normalizeText, escapeRegex, maskUrl, segmentByLanguage, chunkTextByMorphs, segmentTextWithEffects } from './utils';
 import { getCacheKey, readVoiceCache, updateVoiceCache, initCacheFile } from './voiceCache';
 import { synthesizeWithGoogleTTS, getVoicevoxAudio, synthesizeMixedTTS } from './tts';
-import { readAloud, processSynthesisQueue, processPlayQueue } from './audioPlayer';
+import { readAloud, processSynthesisQueue, processPlayQueue, destroyGuildPlayer } from './audioPlayer';
 import { startCoordinatorServer, queryAllBots } from './botCoordinator';
 import { initDashboard, getLogBuffer } from './dashboard';
 import { loadSoundEffects, addSoundEffect, removeSoundEffect, listSoundEffects } from './soundEffects';
@@ -76,6 +76,9 @@ export async function createBot(config: BotConfig): Promise<Client> {
   const playQueues: Map<string, string[]> = new Map();
   const isSynthesizing: Map<string, boolean> = new Map();
   const isPlaying: Map<string, boolean> = new Map();
+  const lastDestroyTime: Map<string, number> = new Map();
+
+  const POST_DESTROY_COOLDOWN_MS = 2000;
 
   let joining = false;
 
@@ -273,6 +276,7 @@ export async function createBot(config: BotConfig): Promise<Client> {
   }
 
   function cleanupGuildState(guildId: string): void {
+    destroyGuildPlayer(guildId);
     synthesisQueues.delete(guildId);
     playQueues.delete(guildId);
     isSynthesizing.delete(guildId);
@@ -295,13 +299,10 @@ export async function createBot(config: BotConfig): Promise<Client> {
   }
 
   function stopPlayer(guildId: string): void {
+    destroyGuildPlayer(guildId);
     const connection = getVoiceConnection(guildId);
-    if (connection) {
+    if (connection && connection.state.status !== VoiceConnectionStatus.Destroyed) {
       const subscription = (connection.state as any).subscription;
-      if (subscription?.player) {
-        subscription.player.stop(true);
-        subscription.player.removeAllListeners();
-      }
       subscription?.unsubscribe();
     }
   }
@@ -368,6 +369,7 @@ export async function createBot(config: BotConfig): Promise<Client> {
 
       connection.on(VoiceConnectionStatus.Destroyed, () => {
         console.log(`[VC Status] Guild ${guildId}: Connection destroyed. Cleaning up.`);
+        lastDestroyTime.set(guildId, Date.now());
         cleanupGuildState(guildId);
         updatePresence();
       });
@@ -394,12 +396,13 @@ export async function createBot(config: BotConfig): Promise<Client> {
       const connection = getVoiceConnection(guildId);
       if (connection) {
         stopPlayer(guildId);
+        cleanupGuildState(guildId);
 
         if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
           connection.destroy();
         }
 
-        cleanupGuildState(guildId);
+        lastDestroyTime.set(guildId, Date.now());
         cleanupVCFile(guildId);
 
         await interaction.reply(LEAVE_MESSAGE);
@@ -838,14 +841,14 @@ export async function createBot(config: BotConfig): Promise<Client> {
         console.log(`[Auto Leave] Guild ${guildId}: VCが空になったため、自動退出します。`);
 
         stopPlayer(guildId);
+        cleanupGuildState(guildId);
 
         if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
           connection.destroy();
         }
 
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        lastDestroyTime.set(guildId, Date.now());
 
-        cleanupGuildState(guildId);
         cleanupVCFile(guildId);
       }
     }
@@ -911,6 +914,14 @@ export async function createBot(config: BotConfig): Promise<Client> {
         return;
       }
 
+      const lastDestroy = lastDestroyTime.get(guild.id) ?? 0;
+      const elapsedSinceDestroy = Date.now() - lastDestroy;
+      if (elapsedSinceDestroy < POST_DESTROY_COOLDOWN_MS) {
+        const waitMs = POST_DESTROY_COOLDOWN_MS - elapsedSinceDestroy;
+        console.log(`[Auto Join] 直前のVC破棄から${elapsedSinceDestroy}ms経過。Discordゲートウェイ整合確保のため${waitMs}ms待機します。`);
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
+
       const connection = joinVoiceChannel({
         channelId: voiceChannel.id,
         guildId: guild.id,
@@ -943,6 +954,7 @@ export async function createBot(config: BotConfig): Promise<Client> {
 
       connection.on(VoiceConnectionStatus.Destroyed, () => {
         console.log(`[VC Status] Guild ${guild.id}: Connection destroyed. Cleaning up.`);
+        lastDestroyTime.set(guild.id, Date.now());
         cleanupGuildState(guild.id);
         updatePresence();
       });
@@ -1081,6 +1093,7 @@ export async function createBot(config: BotConfig): Promise<Client> {
 
           connection.on(VoiceConnectionStatus.Destroyed, () => {
             console.log(`[VC Status] Guild ${lastGuildId}: Connection destroyed. Cleaning up.`);
+            lastDestroyTime.set(lastGuildId, Date.now());
             cleanupGuildState(lastGuildId);
             updatePresence();
           });
