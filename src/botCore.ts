@@ -236,6 +236,7 @@ export async function createBot(config: BotConfig): Promise<Client> {
       guildId: guild.id,
       adapterCreator: guild.voiceAdapterCreator,
       selfDeaf: true,
+      daveEncryption: false,
     });
 
     await entersState(connection, VoiceConnectionStatus.Ready, VC_CONNECTION_TIMEOUT_MS);
@@ -347,6 +348,7 @@ export async function createBot(config: BotConfig): Promise<Client> {
         guildId: interaction.guild.id,
         adapterCreator: interaction.guild.voiceAdapterCreator,
         selfDeaf: true,
+        daveEncryption: false,
       });
 
       await entersState(connection, VoiceConnectionStatus.Ready, VC_CONNECTION_TIMEOUT_MS);
@@ -927,6 +929,7 @@ export async function createBot(config: BotConfig): Promise<Client> {
         guildId: guild.id,
         adapterCreator: guild.voiceAdapterCreator,
         selfDeaf: true,
+        daveEncryption: false,
       });
 
       await entersState(connection, VoiceConnectionStatus.Ready, VC_CONNECTION_TIMEOUT_MS);
