@@ -843,6 +843,8 @@ export async function createBot(config: BotConfig): Promise<Client> {
           connection.destroy();
         }
 
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
         cleanupGuildState(guildId);
         cleanupVCFile(guildId);
       }

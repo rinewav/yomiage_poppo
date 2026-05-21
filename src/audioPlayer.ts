@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { createAudioPlayer, createAudioResource, AudioPlayerStatus, getVoiceConnection, VoiceConnection } from '@discordjs/voice';
+import { createAudioPlayer, createAudioResource, AudioPlayerStatus, getVoiceConnection, VoiceConnection, StreamType, NoSubscriberBehavior } from '@discordjs/voice';
 import { SynthesisItem, Segment } from './types';
 import { DEFAULT_PLAYBACK_VOLUME, SOUND_EFFECT_VOLUME, SOUNDS_DIR } from './constants';
 import { synthesizeMixedTTS } from './tts';
@@ -205,7 +205,9 @@ export async function processPlayQueue(
 
   let player = (connection.state as any).subscription?.player;
   if (!player) {
-    player = createAudioPlayer();
+    player = createAudioPlayer({
+      behaviors: { noSubscriber: NoSubscriberBehavior.Pause },
+    });
     connection.subscribe(player);
 
     player.on(AudioPlayerStatus.Idle, () => {
@@ -259,7 +261,10 @@ function playNextAudio(currentPlayer: any, playQueue: string[], guildId: string,
   }
 
   try {
-    const resource = createAudioResource(audioPath, { inlineVolume: true });
+    const resource = createAudioResource(audioPath, {
+      inlineVolume: true,
+      inputType: StreamType.Arbitrary,
+    });
     resource.volume.setVolume(volumeToApply);
     currentPlayer.play(resource);
   } catch (error) {
