@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import * as prism from 'prism-media';
+import { spawn } from 'child_process';
+import type { ChildProcess } from 'child_process';
 import { createAudioPlayer, createAudioResource, AudioPlayerStatus, AudioPlayer, AudioResource, getVoiceConnection, NoSubscriberBehavior, StreamType, VoiceConnectionStatus } from '@discordjs/voice';
 import { SynthesisItem, Segment } from './types';
 import { DEFAULT_PLAYBACK_VOLUME, SOUND_EFFECT_VOLUME, SOUNDS_DIR } from './constants';
@@ -270,48 +271,45 @@ export async function processPlayQueue(
   }
 }
 
-function createFfmpegOpusStream(audioPath: string, volume: number): any {
-  const FFmpegCtor = (prism as any).FFmpeg;
-  return new FFmpegCtor({
-    args: [
-      '-analyzeduration', '0',
-      '-loglevel', 'warning',
-      '-i', audioPath,
-      '-vn',
-      '-filter:a', `volume=${volume},aresample=async=1:first_pts=0`,
-      '-acodec', 'libopus',
-      '-f', 'opus',
-      '-ar', '48000',
-      '-ac', '2',
-      '-b:a', '96k',
-      '-frame_duration', '20',
-      '-application', 'voip',
-      '-vbr', 'off',
-    ],
-  });
+function spawnFfmpegOpus(audioPath: string, volume: number) {
+  const args = [
+    '-hide_banner',
+    '-analyzeduration', '0',
+    '-loglevel', 'warning',
+    '-i', audioPath,
+    '-vn',
+    '-filter:a', `volume=${volume},aresample=async=1:first_pts=0`,
+    '-acodec', 'libopus',
+    '-f', 'opus',
+    '-ar', '48000',
+    '-ac', '2',
+    '-b:a', '96k',
+    '-frame_duration', '20',
+    '-application', 'voip',
+    '-vbr', 'off',
+    'pipe:1',
+  ];
+  return spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-function attachFfmpegLifecycle(ffmpegStream: any, resource: AudioResource, audioPath: string): void {
+function attachFfmpegLifecycle(ffmpeg: ChildProcess, resource: AudioResource, audioPath: string): void {
   let stderrBuf = '';
-  const proc = ffmpegStream.process;
-  if (!proc) return;
-  proc.stderr?.on('data', (chunk: Buffer) => {
+  ffmpeg.stderr?.on('data', (chunk: Buffer) => {
     stderrBuf += chunk.toString();
     if (stderrBuf.length > 4096) stderrBuf = stderrBuf.slice(-4096);
   });
-  proc.on('error', (err: Error) => {
+  ffmpeg.on('error', (err) => {
     console.error(`[ffmpeg spawn error] path=${audioPath}:`, err.message);
   });
-  proc.on('exit', (code: number | null, signal: string | null) => {
+  ffmpeg.on('exit', (code, signal) => {
     if (code !== 0 && signal !== 'SIGTERM' && signal !== 'SIGKILL') {
       console.warn(`[ffmpeg exit] path=${audioPath} code=${code} signal=${signal} stderr=${stderrBuf.trim()}`);
     }
   });
   const killFfmpeg = () => {
-    if (proc && !proc.killed && proc.exitCode === null) {
-      try { proc.kill('SIGKILL'); } catch (_) { /* ignore */ }
+    if (!ffmpeg.killed && ffmpeg.exitCode === null) {
+      try { ffmpeg.kill('SIGKILL'); } catch (_) { /* ignore */ }
     }
-    try { ffmpegStream.destroy?.(); } catch (_) { /* ignore */ }
   };
   resource.playStream.once('end', killFfmpeg);
   resource.playStream.once('close', killFfmpeg);
@@ -354,22 +352,21 @@ function playNextAudio(currentPlayer: AudioPlayer, playQueue: string[], guildId:
     volumeToApply = DEFAULT_PLAYBACK_VOLUME;
   }
 
-  let ffmpegStream: any = null;
+  let ffmpeg: ReturnType<typeof spawnFfmpegOpus> | null = null;
   try {
-    ffmpegStream = createFfmpegOpusStream(audioPath, volumeToApply);
-    const resource = createAudioResource(ffmpegStream, {
+    ffmpeg = spawnFfmpegOpus(audioPath, volumeToApply);
+    if (!ffmpeg.stdout) {
+      throw new Error('ffmpeg stdout is not available');
+    }
+    const resource = createAudioResource(ffmpeg.stdout, {
       inputType: StreamType.OggOpus,
     });
-    attachFfmpegLifecycle(ffmpegStream, resource, audioPath);
+    attachFfmpegLifecycle(ffmpeg, resource, audioPath);
     currentPlayer.play(resource);
   } catch (error) {
     console.error(`[ERROR] 音声リソースの作成または再生に失敗しました (path: ${audioPath}):`, error);
-    if (ffmpegStream) {
-      try { ffmpegStream.destroy?.(); } catch (_) { /* ignore */ }
-      const proc = ffmpegStream.process;
-      if (proc && !proc.killed && proc.exitCode === null) {
-        try { proc.kill('SIGKILL'); } catch (_) { /* ignore */ }
-      }
+    if (ffmpeg && !ffmpeg.killed) {
+      try { ffmpeg.kill('SIGKILL'); } catch (_) { /* ignore */ }
     }
     playNextAudio(currentPlayer, playQueue, guildId, playQueues, isPlaying);
   }
