@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import * as prism from 'prism-media';
+import prism from 'prism-media';
 import { createAudioPlayer, createAudioResource, AudioPlayerStatus, AudioPlayer, AudioResource, getVoiceConnection, NoSubscriberBehavior, StreamType, VoiceConnectionStatus } from '@discordjs/voice';
 import { SynthesisItem, Segment } from './types';
 import { DEFAULT_PLAYBACK_VOLUME, SOUND_EFFECT_VOLUME, SOUNDS_DIR } from './constants';
