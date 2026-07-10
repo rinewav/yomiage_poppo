@@ -3,6 +3,7 @@ name: Deploy Discord Bot
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -17,9 +18,11 @@ jobs:
         working-directory: ${{ env.BOT_DIR }}
         run: pm2 stop ecosystem.config.cjs || echo already stopped
 
-      - name: Pull latest code
+      # デプロイ先はミラーなので、ローカル変更（npm ci が触った package-lock 等）は
+      # 破棄して origin/main に完全一致させる（git pull だとローカル変更で失敗する）
+      - name: Sync to origin/main
         working-directory: ${{ env.BOT_DIR }}
-        run: git pull origin main
+        run: git fetch origin main && git reset --hard origin/main
 
       - name: Install dependencies
         working-directory: ${{ env.BOT_DIR }}
