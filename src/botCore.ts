@@ -299,8 +299,10 @@ export async function createBot(config: BotConfig): Promise<Client> {
     if (connection) {
       const subscription = (connection.state as any).subscription;
       if (subscription?.player) {
-        subscription.player.stop(true);
+        // stop(true) は同期的に Idle イベントを発火させるため、先にリスナーを外さないと
+        // Idle ハンドラが残キューから play() を呼び直し、player が破棄されずに残る
         subscription.player.removeAllListeners();
+        subscription.player.stop(true);
       }
       subscription?.unsubscribe();
     }
