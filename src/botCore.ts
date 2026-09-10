@@ -490,6 +490,7 @@ export async function createBot(config: BotConfig): Promise<Client> {
       }
 
       if (commandName === 'voice') {
+        if (config.botNumber !== 1) return interaction.reply({ content: 'このコマンドは1号機でのみ使用できます。', flags: MessageFlags.Ephemeral });
         const raw = interaction.options.getString('name', true).trim();
         const id = Number(raw);
         if (!Number.isInteger(id) || id < 0) {
@@ -1125,16 +1126,16 @@ export async function createBot(config: BotConfig): Promise<Client> {
     new SlashCommandBuilder().setName('leave').setDescription('VCから退出'),
     new SlashCommandBuilder().setName('reload').setDescription('【⚠️】ボットを再起動します'),
     new SlashCommandBuilder().setName('skip').setDescription('現在の読み上げと待機中の読み上げをスキップ'),
-    new SlashCommandBuilder()
-      .setName('voice')
-      .setDescription('あなた専用の声を設定')
-      .addStringOption((o) =>
-        o.setName('name').setDescription('声の名前（入力すると候補が出ます）').setRequired(true).setAutocomplete(true)
-      ),
   ];
 
   const fullCommands = [
     ...basicCommands,
+    new SlashCommandBuilder()
+      .setName('voice')
+      .setDescription('あなた専用の声を設定（全号機に共通で反映されます）')
+      .addStringOption((o) =>
+        o.setName('name').setDescription('声の名前（入力すると候補が出ます）').setRequired(true).setAutocomplete(true)
+      ),
     new SlashCommandBuilder()
       .setName('setdict')
       .setDescription('辞書に単語を追加または削除')
