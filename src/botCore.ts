@@ -342,7 +342,15 @@ export async function createBot(config: BotConfig): Promise<Client> {
 
   // VoiceConnection に切断・破棄時のリスナーを付与する（/join・自動参加・起動時再接続で共通）
   function attachConnectionHandlers(connection: VoiceConnection, guildId: string): void {
+    // VC移動などで別の接続に置き換わった後に古い接続のイベントが遅れて届いた場合、
+    // 新しい接続のギルド状態を消さないためのガード
+    const isStale = (): boolean => {
+      const current = getVoiceConnection(guildId);
+      return current !== undefined && current !== connection;
+    };
+
     connection.on(VoiceConnectionStatus.Disconnected, async () => {
+      if (isStale()) return;
       try {
         await Promise.race([
           entersState(connection, VoiceConnectionStatus.Signalling, VC_RECONNECT_TIMEOUT_MS),
@@ -350,10 +358,11 @@ export async function createBot(config: BotConfig): Promise<Client> {
         ]);
         console.log(`[VC Status] Guild ${guildId}: Connection is attempting to reconnect.`);
       } catch {
-        console.warn(`[VC Status] Guild ${guildId}: Connection permanently disconnected. Destroying and cleaning up.`);
         if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
+          console.warn(`[VC Status] Guild ${guildId}: Connection permanently disconnected. Destroying and cleaning up.`);
           connection.destroy();
         }
+        if (isStale()) return;
         cleanupGuildState(guildId);
         cleanupVCFile(guildId);
       }
@@ -361,7 +370,7 @@ export async function createBot(config: BotConfig): Promise<Client> {
 
     connection.on(VoiceConnectionStatus.Destroyed, () => {
       console.log(`[VC Status] Guild ${guildId}: Connection destroyed. Cleaning up.`);
-      cleanupGuildState(guildId);
+      if (!isStale()) cleanupGuildState(guildId);
       updatePresence();
     });
   }
