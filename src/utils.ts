@@ -15,13 +15,16 @@ export function escapeRegex(string: string): string {
 
 // URLをホスト名から読み上げ用の文言に変換する（例: 「YouTubeのリンク」）
 export function describeUrl(url: string): string {
+  // メッセージ中のURLは文末の括弧・句読点を巻き込んでマッチするため、先に取り除く
+  const cleaned = url.replace(/[)）\]」』】。、．，！？!?,.;:'"]+$/u, '');
   let hostname: string;
   try {
-    hostname = new URL(url).hostname.toLowerCase();
+    hostname = new URL(cleaned).hostname.toLowerCase();
   } catch (_) {
     return URL_REPLACEMENT;
   }
 
+  hostname = hostname.replace(/\.+$/, '');
   if (hostname.startsWith('www.')) {
     hostname = hostname.slice(4);
   }

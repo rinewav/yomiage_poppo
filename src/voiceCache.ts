@@ -18,8 +18,8 @@ let mutexTail: Promise<void> = Promise.resolve();
 
 function parseCache(data: string): Record<string, VoiceCacheEntry> {
   const cache = JSON.parse(data);
-  if (Array.isArray(cache)) return {};
-  return cache || {};
+  if (typeof cache !== 'object' || cache === null || Array.isArray(cache)) return {};
+  return cache;
 }
 
 async function acquireLockAsync(): Promise<void> {
