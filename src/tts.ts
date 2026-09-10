@@ -7,7 +7,6 @@ import {
   VOICEVOX_SYNTHESIS_TIMEOUT_MS,
   HIGH_PITCH_SCALE,
   LANG_CODE_MAP,
-  NOSPLIT_PATTERN,
 } from './constants';
 import { getCacheKey, readVoiceCache, updateVoiceCache } from './voiceCache';
 
@@ -33,10 +32,7 @@ export async function synthesizeWithGoogleTTS(text: string, filePath: string, fo
 
   const request = {
     input: { text },
-    voice: {
-      languageCode,
-      ssmlGender: 'NEURAL' as const,
-    },
+    voice: { languageCode },
     audioConfig: {
       audioEncoding: 'LINEAR16' as const,
     },
@@ -112,18 +108,19 @@ export async function synthesizeMixedTTS(
   outputPath: string,
   highPitch: boolean = false,
   ttsEngine: string = 'hybrid',
-  servers: VoicevoxServer[] = []
+  servers: VoicevoxServer[] = [],
+  isJapanese?: boolean
 ): Promise<void> {
-  if (text) {
-    text = text.replace(NOSPLIT_PATTERN, '');
-  }
   if (!text || typeof text !== 'string' || text.trim() === '') return;
   try {
     if (ttsEngine === 'google') {
       await synthesizeWithGoogleTTS(text, outputPath, true);
     } else {
-      const isJapanese = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\uFF61-\uFF9F]/.test(text);
-      if (isJapanese) {
+      const shouldUseJapanese =
+        typeof isJapanese === 'boolean'
+          ? isJapanese
+          : /[\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FAF\uF900-\uFAFF\uFF61-\uFF9F\u3005-\u3007]/.test(text);
+      if (shouldUseJapanese) {
         const audioData = await getVoicevoxAudio(text, speakerId, highPitch, servers);
         fs.writeFileSync(outputPath, audioData);
       } else {
