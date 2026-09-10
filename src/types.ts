@@ -26,6 +26,7 @@ export interface SynthesisItem {
   highPitch?: boolean;
   ttsEngine?: string;
   filePath?: string;
+  isJapanese?: boolean;
 }
 
 export interface Segment {

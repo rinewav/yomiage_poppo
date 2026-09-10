@@ -1,55 +1,79 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
-import { PROJECT_ROOT, CACHE_GENERATION_DELAY_MS, MAX_SPEAKER_ID } from './constants';
+import {
+  PROJECT_ROOT,
+  CACHE_GENERATION_DELAY_MS,
+  MAX_SPEAKER_ID,
+  HIGH_PITCH_SCALE,
+  VOICEVOX_QUERY_TIMEOUT_MS,
+  VOICEVOX_SYNTHESIS_TIMEOUT_MS,
+} from './constants';
 import { getCacheKey, readVoiceCache, updateVoiceCache, initCacheFile } from './voiceCache';
-import { VoiceCacheEntry } from './types';
 
 console.log('事前キャッシュ生成スクリプトを開始します...');
 
-const PRIMARY_VOICEVOX_URL: string = process.env.VOICEVOX_URL || '';
-const FALLBACK_VOICEVOX_URL: string = process.env.VOICEVOX_FALLBACK_URL || '';
+const urlsEnv = process.env.VOICEVOX_URLS;
+const legacyUrl = process.env.VOICEVOX_URL;
 
-if (!PRIMARY_VOICEVOX_URL) {
-  console.error('エラー: VOICEVOX_URL 環境変数が設定されていません。');
+let PRIMARY_VOICEVOX_URL: string;
+let FALLBACK_VOICEVOX_URL: string = '';
+
+if (urlsEnv) {
+  const urls = urlsEnv.split(',').map((u) => u.trim()).filter((u) => u !== '');
+  if (urls.length === 0) {
+    console.error('エラー: VOICEVOX_URLS 環境変数が空です。');
+    process.exit(1);
+  }
+  PRIMARY_VOICEVOX_URL = urls[0];
+  if (urls.length > 1) {
+    FALLBACK_VOICEVOX_URL = urls[1];
+  } else {
+    console.log('[INFO] VOICEVOX_URLS にはURLが1件のみのため、フォールバックはスキップします。');
+  }
+} else if (legacyUrl) {
+  PRIMARY_VOICEVOX_URL = legacyUrl;
+  console.log('[INFO] VOICEVOX_URLS が未設定のため、レガシーの VOICEVOX_URL を使用します。');
+} else {
+  console.error('エラー: VOICEVOX_URLS （または VOICEVOX_URL）環境変数が設定されていません。');
   process.exit(1);
 }
 
-const TARGET_SPEAKER_IDS: number[] = Array.from({ length: MAX_SPEAKER_ID }, (_, i) => i + 1);
+const TARGET_SPEAKER_IDS: number[] = Array.from({ length: MAX_SPEAKER_ID + 1 }, (_, i) => i);
 
 const CACHE_LIST_FILE: string = path.join(PROJECT_ROOT, 'cache_list.txt');
 const PRE_CACHE_DIR: string = path.join(PROJECT_ROOT, 'pre_cache_audio');
 
+async function synthesize(baseUrl: string, text: string, speakerId: number): Promise<Buffer> {
+  const queryResponse = await axios.post(`${baseUrl}/audio_query`, null, {
+    params: { text, speaker: speakerId },
+    timeout: VOICEVOX_QUERY_TIMEOUT_MS,
+  });
+  const queryData = queryResponse.data;
+  if (/[\uFF61-\uFF9F]/.test(text)) {
+    queryData.pitchScale = HIGH_PITCH_SCALE;
+  }
+  const audioResponse = await axios.post(`${baseUrl}/synthesis`, queryData, {
+    params: { speaker: speakerId },
+    responseType: 'arraybuffer',
+    timeout: VOICEVOX_SYNTHESIS_TIMEOUT_MS,
+  });
+  return audioResponse.data;
+}
+
 async function getVoicevoxAudio(text: string, speakerId: number): Promise<Buffer> {
-  let queryData: any;
   try {
-    const queryResponse = await axios.post(`${PRIMARY_VOICEVOX_URL}/audio_query`, null, {
-      params: { text, speaker: speakerId },
-    });
-    queryData = queryResponse.data;
-    if (/[\uFF61-\uFF9F]/.test(text)) {
-      queryData.pitchScale = 0.1;
-    }
-    const audioResponse = await axios.post(`${PRIMARY_VOICEVOX_URL}/synthesis`, queryData, {
-      params: { speaker: speakerId },
-      responseType: 'arraybuffer',
-    });
-    return audioResponse.data;
+    return await synthesize(PRIMARY_VOICEVOX_URL, text, speakerId);
   } catch (primaryError) {
+    if (!FALLBACK_VOICEVOX_URL) {
+      throw primaryError;
+    }
     console.warn(`[WARN] 優先URL (${PRIMARY_VOICEVOX_URL}) が失敗しました。代替URLを試します。`);
     try {
-      const queryResponse = await axios.post(`${FALLBACK_VOICEVOX_URL}/audio_query`, null, {
-        params: { text, speaker: speakerId },
-      });
-      queryData = queryResponse.data;
-      if (/[\uFF61-\uFF9F]/.test(text)) {
-        queryData.pitchScale = 0.1;
-      }
-      const audioResponse = await axios.post(`${FALLBACK_VOICEVOX_URL}/synthesis`, queryData, {
-        params: { speaker: speakerId },
-        responseType: 'arraybuffer',
-      });
-      return audioResponse.data;
+      return await synthesize(FALLBACK_VOICEVOX_URL, text, speakerId);
     } catch (fallbackError) {
       console.error(`[ERROR] 代替URL (${FALLBACK_VOICEVOX_URL}) も失敗しました。`);
       throw fallbackError;
@@ -63,7 +87,7 @@ async function generateCache(): Promise<void> {
     return;
   }
   fs.mkdirSync(PRE_CACHE_DIR, { recursive: true });
-  initCacheFile();
+  await initCacheFile();
 
   const cache = readVoiceCache();
 
@@ -95,7 +119,7 @@ async function generateCache(): Promise<void> {
         const filePath = path.join(PRE_CACHE_DIR, `${key}.wav`);
         fs.writeFileSync(filePath, audioData);
 
-        updateVoiceCache((c) => {
+        await updateVoiceCache((c) => {
           c[key] = {
             text,
             speakerId,

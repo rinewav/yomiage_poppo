@@ -38,6 +38,10 @@ export function addSoundEffect(keyword: string, file: string): { success: boolea
     return { success: false, message: `キーワード「${keyword}」は既に登録されています（ファイル: ${existing.file}）` };
   }
 
+  if (file.includes('..') || path.basename(file) !== file) {
+    return { success: false, message: 'ファイル名のみを指定してください（例: test.wav）' };
+  }
+
   const filePath = path.join(SOUNDS_DIR, file);
   if (!fs.existsSync(filePath)) {
     return { success: false, message: `ファイルが見つかりません: sounds/${file}` };

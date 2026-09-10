@@ -66,3 +66,49 @@ export const DASHBOARD_LOG_LINES = 3;
 export const DASHBOARD_REFRESH_MS = 5_000;
 export const PRESENCE_BUSY_TEXT = '❌ 使用中です！';
 export const PRESENCE_IDLE_TEXT = '⭕️ 空いています！';
+// --- 読み上げ分割 ---
+// 句読点では常に分割。助詞・接続詞では現在チャンクがこの長さ以上のときのみ分割する
+export const SOFT_CHUNK_LENGTH = 15;
+
+// --- メッセージ整形 ---
+export const TRUNCATION_SUFFIX = '、以下略';
+export const TIMESTAMP_REPLACEMENT = '日時';
+export const ROLE_MENTION_REPLACEMENT = 'メンション';
+
+// URL 読み上げ: ホスト名の末尾一致で表示名に変換する（該当なしはホスト名をそのまま読む）
+export const URL_DOMAIN_NAMES: Record<string, string> = {
+  'youtube.com': 'YouTube',
+  'youtu.be': 'YouTube',
+  'x.com': 'X',
+  'twitter.com': 'X',
+  'discord.com': 'Discord',
+  'discord.gg': 'Discord',
+  'discordapp.com': 'Discord',
+  'github.com': 'GitHub',
+  'google.com': 'Google',
+  'amazon.co.jp': 'Amazon',
+  'amazon.com': 'Amazon',
+  'nicovideo.jp': 'ニコニコ',
+  'pixiv.net': 'pixiv',
+  'spotify.com': 'Spotify',
+  'soundcloud.com': 'SoundCloud',
+  'twitch.tv': 'Twitch',
+  'instagram.com': 'Instagram',
+  'tiktok.com': 'TikTok',
+  'booth.pm': 'BOOTH',
+  'note.com': 'note',
+  'bilibili.com': 'ビリビリ',
+  'wikipedia.org': 'Wikipedia',
+  'apple.com': 'Apple',
+  'steampowered.com': 'Steam',
+  'bsky.app': 'Bluesky',
+};
+
+// --- コマンド ---
+export const SKIP_MESSAGE = '⏭️ 読み上げをスキップしました。';
+export const NOT_CONNECTED_MESSAGE = 'VCに参加していません。';
+export const AUTOCOMPLETE_MAX_CHOICES = 25;
+
+// --- 通知 ---
+// VOICEVOX ダウン/復旧の Discord 通知を送る号機（重複投稿防止）
+export const HEALTH_NOTIFY_BOT_NUMBER = 1;

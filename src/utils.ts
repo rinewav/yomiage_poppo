@@ -1,5 +1,5 @@
-import crypto from 'crypto';
-import { SynthesisItem, Segment } from './types';
+import { Segment } from './types';
+import { SOFT_CHUNK_LENGTH, MAX_CHUNK_LENGTH, URL_DOMAIN_NAMES, URL_REPLACEMENT } from './constants';
 
 export function normalizeText(text: string): string {
   return text
@@ -11,6 +11,27 @@ export function normalizeText(text: string): string {
 
 export function escapeRegex(string: string): string {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// URLをホスト名から読み上げ用の文言に変換する（例: 「YouTubeのリンク」）
+export function describeUrl(url: string): string {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname.toLowerCase();
+  } catch (_) {
+    return URL_REPLACEMENT;
+  }
+
+  if (hostname.startsWith('www.')) {
+    hostname = hostname.slice(4);
+  }
+
+  const matchedKey = Object.keys(URL_DOMAIN_NAMES).find(
+    (key) => hostname === key || hostname.endsWith(`.${key}`)
+  );
+
+  const name = matchedKey ? URL_DOMAIN_NAMES[matchedKey] : hostname;
+  return `${name}の${URL_REPLACEMENT}`;
 }
 
 export function maskUrl(url: string): string {
@@ -26,7 +47,8 @@ export function maskUrl(url: string): string {
         hostname = `***.${parts.slice(-2).join('.')}`;
       }
     }
-    return `${urlObj.protocol}//${hostname}:${urlObj.port}`;
+    const portSuffix = urlObj.port ? `:${urlObj.port}` : '';
+    return `${urlObj.protocol}//${hostname}${portSuffix}`;
   } catch (_) {
     return url.replace(/([\w.-]+)/g, (match: string, p1: string) => {
       if (p1.length > 2) return p1[0] + '***';
@@ -35,86 +57,164 @@ export function maskUrl(url: string): string {
   }
 }
 
+// 日本語として扱う文字集合: ひらがな・カタカナ・CJK統合漢字（拡張Aと基本領域）・CJK互換漢字・半角カナ・々〆〇
+const JA_CHAR_REGEX =
+  /[぀-ゟ゠-ヿ㐀-䶿一-鿿豈-﫿｡-ﾟ々-〇]/u;
+// 日本語以外の文字（ラテン・キリル・ハングル・タイ文字など）
+const OTHER_LETTER_REGEX = /[\p{L}\p{M}]/u;
+const LETTER_OR_NUMBER_REGEX = /[\p{L}\p{N}]/u;
+const HAS_DIGIT_REGEX = /\p{N}/u;
+
 export function segmentByLanguage(text: string): Array<{ text: string; lang: 'ja' | 'en' }> {
-  const segmentationRegex = /([\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\uFF61-\uFF9F]+|[a-zA-Z0-9.,!?'"()\s]+)/g;
-  const segments = text.match(segmentationRegex) || [];
-  const japaneseRegex = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\uFF61-\uFF9F]/;
-  return segments.map((segment) => {
-    const lang = japaneseRegex.test(segment) ? 'ja' : 'en';
-    return { text: segment, lang: lang as 'ja' | 'en' };
-  });
+  type Lang = 'ja' | 'en';
+  const segments: Array<{ text: string; lang: Lang }> = [];
+  let currentLang: Lang | null = null;
+  let currentText = '';
+  let neutralBuffer = '';
+
+  const flush = () => {
+    if (currentLang !== null) {
+      segments.push({ text: currentText, lang: currentLang });
+    }
+    currentLang = null;
+    currentText = '';
+  };
+
+  for (const ch of text) {
+    const isJa = JA_CHAR_REGEX.test(ch);
+    const isOtherLetter = !isJa && OTHER_LETTER_REGEX.test(ch);
+
+    if (isJa || isOtherLetter) {
+      const lang: Lang = isJa ? 'ja' : 'en';
+      if (currentLang !== null && currentLang !== lang) {
+        flush();
+      }
+      if (currentLang === null) {
+        currentLang = lang;
+        currentText = neutralBuffer;
+        neutralBuffer = '';
+      }
+      currentText += ch;
+    } else if (currentLang !== null) {
+      currentText += ch;
+    } else {
+      neutralBuffer += ch;
+    }
+  }
+  flush();
+
+  if (segments.length === 0) {
+    // 全体が数字・記号などのみ: 数字を含むならVOICEVOXが自然に読めるので'ja'として1セグメント返す
+    if (HAS_DIGIT_REGEX.test(neutralBuffer)) {
+      return [{ text: neutralBuffer, lang: 'ja' }];
+    }
+    return [];
+  }
+
+  return segments.filter((seg) => LETTER_OR_NUMBER_REGEX.test(seg.text));
+}
+
+interface MorphToken {
+  surface_form: string;
+  pos: string;
+  pos_detail_1: string;
+  [key: string]: unknown;
+}
+
+function splitByNoSplitWords(text: string, noSplitWords: string[]): Array<{ text: string; isNoSplit: boolean }> {
+  const words = noSplitWords.filter(Boolean);
+  if (words.length === 0) return [{ text, isNoSplit: false }];
+
+  const sortedWords = [...words].sort((a, b) => b.length - a.length);
+  const pattern = new RegExp(sortedWords.map(escapeRegex).join('|'), 'g');
+
+  const parts: Array<{ text: string; isNoSplit: boolean }> = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ text: text.slice(lastIndex, match.index), isNoSplit: false });
+    }
+    parts.push({ text: match[0], isNoSplit: true });
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    parts.push({ text: text.slice(lastIndex), isNoSplit: false });
+  }
+  return parts;
+}
+
+function isPunctuationSymbolToken(token: MorphToken): boolean {
+  if (token.pos !== '記号') return false;
+  if (token.pos_detail_1 === '句点' || token.pos_detail_1 === '読点') return true;
+  return /^[。、!?！？…‥,\.]+$/.test(token.surface_form);
+}
+
+function isSoftBoundaryToken(token: MorphToken): boolean {
+  return (
+    token.pos === '接続詞' ||
+    token.pos_detail_1 === '格助詞' ||
+    token.pos_detail_1 === '終助詞' ||
+    token.pos_detail_1 === '接続助詞' ||
+    token.pos_detail_1 === '係助詞'
+  );
 }
 
 export async function chunkTextByMorphs(
   text: string,
   tokenizer: any | null,
   noSplitWords: string[] = [],
-  maxChunkLength: number = 30
+  maxChunkLength: number = MAX_CHUNK_LENGTH
 ): Promise<string[]> {
-  const isJapaneseRegex = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/;
-  if (!isJapaneseRegex.test(text)) {
+  if (!JA_CHAR_REGEX.test(text)) {
     console.log('[chunkTextByMorphs] Non-Japanese text detected. Skipping kuromoji tokenizer.');
     return [text];
   }
 
   if (!tokenizer || !text) {
-    return text.split(/(?<=[。！？\.\!\?])/).filter((s) => s.trim());
+    return text.split(/(?<=[。!?！？\.、,])/).filter((s) => s.trim());
   }
 
-  const placeholders: Map<string, string> = new Map();
-
-  if (noSplitWords.length > 0) {
-    const sortedNoSplitWords = [...noSplitWords].sort((a, b) => b.length - a.length);
-    for (const word of sortedNoSplitWords) {
-      const placeholder = `NOSPLIT${crypto.randomBytes(6).toString('hex')}MARKER`;
-      const regex = new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
-      if (text.includes(word)) {
-        text = text.replace(regex, ` ${placeholder} `);
-        placeholders.set(placeholder, word);
-      }
+  const parts = splitByNoSplitWords(text, noSplitWords);
+  const tokens: MorphToken[] = [];
+  for (const part of parts) {
+    if (!part.text) continue;
+    if (part.isNoSplit) {
+      tokens.push({ surface_form: part.text, pos: '名詞', pos_detail_1: '*' });
+    } else {
+      tokens.push(...(tokenizer.tokenize(part.text) as MorphToken[]));
     }
   }
 
-  const tokens = tokenizer.tokenize(text);
   const chunks: string[] = [];
   let currentChunk = '';
 
+  const flush = () => {
+    if (currentChunk.trim()) {
+      chunks.push(currentChunk.trim());
+    }
+    currentChunk = '';
+  };
+
   for (const token of tokens) {
     const word = token.surface_form;
-    const pos = token.pos;
-    const posDetail = token.pos_detail_1;
 
-    if (currentChunk.length > maxChunkLength) {
-      chunks.push(currentChunk);
-      currentChunk = '';
+    if (currentChunk.length > 0 && currentChunk.length + word.length > maxChunkLength) {
+      flush();
     }
 
-    if (pos === '記号' || pos === '接続詞' || posDetail === '格助詞' || posDetail === '終助詞') {
-      currentChunk += word;
-      if (currentChunk.trim()) {
-        chunks.push(currentChunk.trim());
-      }
-      currentChunk = '';
-    } else {
-      currentChunk += word;
+    currentChunk += word;
+
+    if (isPunctuationSymbolToken(token)) {
+      flush();
+    } else if (isSoftBoundaryToken(token) && currentChunk.length >= SOFT_CHUNK_LENGTH) {
+      flush();
     }
   }
 
-  if (currentChunk.trim()) {
-    chunks.push(currentChunk.trim());
-  }
+  flush();
 
-  const finalChunks = chunks.map((chunk) => {
-    let finalChunk = chunk;
-    for (const [placeholder, originalWord] of placeholders.entries()) {
-      if (finalChunk.includes(placeholder)) {
-        finalChunk = finalChunk.replace(new RegExp(placeholder, 'g'), originalWord);
-      }
-    }
-    return finalChunk;
-  });
-
-  return finalChunks.filter(Boolean);
+  return chunks.filter(Boolean);
 }
 
 export function segmentTextWithEffects(

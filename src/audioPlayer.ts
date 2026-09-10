@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { createAudioPlayer, createAudioResource, AudioPlayerStatus, getVoiceConnection, VoiceConnection } from '@discordjs/voice';
 import { SynthesisItem, Segment } from './types';
-import { DEFAULT_PLAYBACK_VOLUME, SOUND_EFFECT_VOLUME, SOUNDS_DIR } from './constants';
+import { DEFAULT_PLAYBACK_VOLUME, SOUND_EFFECT_VOLUME, SOUNDS_DIR, DEFAULT_SPEAKER_ID } from './constants';
 import { synthesizeMixedTTS } from './tts';
 import { getCacheKey, readVoiceCache, updateVoiceCache } from './voiceCache';
 import { segmentByLanguage, chunkTextByMorphs } from './utils';
@@ -27,15 +27,14 @@ export async function readAloud(
   if (!playQueues.has(guildId)) playQueues.set(guildId, []);
 
   const userSpeakerFile = path.join(userspeakerDir, `${userId}.json`);
-  let speakerId: number = 3;
+  let speakerId: number = DEFAULT_SPEAKER_ID;
   if (fs.existsSync(userSpeakerFile)) {
     try {
       const data = JSON.parse(fs.readFileSync(userSpeakerFile, 'utf8'));
-      speakerId = data.speakerId ?? 3;
+      speakerId = data.speakerId ?? DEFAULT_SPEAKER_ID;
     } catch (_) { /* Use default */ }
   }
 
-  const synthesisQueue = synthesisQueues.get(guildId)!;
   const itemsToPush: SynthesisItem[] = [];
 
   for (const segment of segments) {
@@ -52,20 +51,30 @@ export async function readAloud(
           const textChunks = await chunkTextByMorphs(langSegment.text, tokenizer, noSplitWords);
           for (const chunk of textChunks) {
             if (chunk.trim()) {
-              const subSegments = chunk.trim().split(/([\uFF61-\uFF9F]+)/);
+              const subSegments = chunk.trim().split(/([｡-ﾟ]+)/);
               for (const subSegment of subSegments) {
                 if (!subSegment) continue;
-                const isHankaku = /^[\uFF61-\uFF9F]+$/.test(subSegment);
-                itemsToPush.push({ type: 'text', text: subSegment, speakerId, userId, highPitch: isHankaku, ttsEngine });
+                const isHankaku = /^[｡-ﾟ]+$/.test(subSegment);
+                itemsToPush.push({ type: 'text', text: subSegment, speakerId, userId, highPitch: isHankaku, ttsEngine, isJapanese: true });
               }
             }
           }
         } else {
-          itemsToPush.push({ type: 'text', text: langSegment.text, speakerId, userId, highPitch: false, ttsEngine });
+          itemsToPush.push({ type: 'text', text: langSegment.text, speakerId, userId, highPitch: false, ttsEngine, isJapanese: false });
         }
       }
     }
   }
+
+  // chunkTextByMorphs の await 中に /skip・再参加・退出でキュー配列が差し替え/削除され得るため、
+  // push 直前に現在の配列を引き直す（接続が無くなっていれば破棄）
+  if (!getVoiceConnection(guildId)) return;
+  let synthesisQueue = synthesisQueues.get(guildId);
+  if (!synthesisQueue) {
+    synthesisQueue = [];
+    synthesisQueues.set(guildId, synthesisQueue);
+  }
+  if (!playQueues.has(guildId)) playQueues.set(guildId, []);
 
   if (itemsToPush.length > 0) {
     synthesisQueue.push(...itemsToPush);
@@ -121,7 +130,7 @@ export async function processSynthesisQueue(
       } else {
         tempPath = path.join(tempDir, `synth_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
         try {
-          await synthesizeMixedTTS(item.text!, item.speakerId!, tempPath, item.highPitch, item.ttsEngine, servers);
+          await synthesizeMixedTTS(item.text!, item.speakerId!, tempPath, item.highPitch, item.ttsEngine, servers, item.isJapanese);
           if (synthesisQueues.get(guildId) !== synthesisQueue) {
             if (fs.existsSync(tempPath)) {
               try { fs.unlinkSync(tempPath); } catch (_) { /* ignore */ }
@@ -129,7 +138,7 @@ export async function processSynthesisQueue(
             return;
           }
           if (fs.existsSync(tempPath)) {
-            updateVoiceCache((cache) => {
+            await updateVoiceCache((cache) => {
               cache[key] = {
                 text: item.text!,
                 speakerId: item.speakerId!,
@@ -208,20 +217,21 @@ export async function processPlayQueue(
     player = createAudioPlayer();
     connection.subscribe(player);
 
+    // playQueues が指すキュー配列は再参加/スキップ時に差し替えられるため、
+    // イベント発火時に playQueues.get(guildId) を引き直して最新のキューを参照する
     player.on(AudioPlayerStatus.Idle, () => {
-      if (playQueue.length === 0) {
+      const currentPlayQueue = playQueues.get(guildId);
+      if (!currentPlayQueue || currentPlayQueue.length === 0) {
         isPlaying.set(guildId, false);
       } else {
-        playNextAudio(player, playQueue, guildId, isPlaying);
+        playNextAudio(player, currentPlayQueue, guildId, isPlaying);
       }
     });
 
     player.on('error', (error: Error) => {
+      // @discordjs/voice は 'error' 発火の直後に Idle へ遷移し、Idle ハンドラがキューを進めるため、
+      // ここではログのみ行い、再生継続やキュー操作は行わない
       console.error(`AudioPlayer Error (guildId: ${guildId}):`, error.message);
-      isPlaying.set(guildId, false);
-      if (playQueue.length > 0) {
-        playNextAudio(player, playQueue, guildId, isPlaying);
-      }
     });
   }
 
@@ -266,4 +276,29 @@ function playNextAudio(currentPlayer: any, playQueue: string[], guildId: string,
     console.error(`[ERROR] 音声リソースの作成または再生に失敗しました (path: ${audioPath}):`, error);
     playNextAudio(currentPlayer, playQueue, guildId, isPlaying);
   }
+}
+
+export function skipPlayback(
+  guildId: string,
+  synthesisQueues: Map<string, SynthesisItem[]>,
+  playQueues: Map<string, string[]>,
+  isSynthesizing: Map<string, boolean>,
+  isPlaying: Map<string, boolean>
+): boolean {
+  const connection = getVoiceConnection(guildId);
+  if (!connection) return false;
+
+  // 実行中の合成ループ/再生キューは配列の参照比較で自身の終了を検知するため、
+  // 新しい配列に差し替えることでそれらを安全に打ち切る
+  synthesisQueues.set(guildId, []);
+  playQueues.set(guildId, []);
+  isSynthesizing.set(guildId, false);
+  isPlaying.set(guildId, false);
+
+  const player = (connection.state as any).subscription?.player;
+  if (player) {
+    player.stop(true);
+  }
+
+  return true;
 }
